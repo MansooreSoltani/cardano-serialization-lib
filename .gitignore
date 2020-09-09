@@ -1,7 +1,13 @@
-node_modules/
-publish/
+# build artifacts
 rust/target
+
+# ide support
 .vscode/
 .idea
 rust/.idea
-binaryen/
+
+# pyenv
+.python-version
+
+# direnv
+.envrc
