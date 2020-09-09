@@ -1,5 +1,6 @@
 # build artifacts
 rust/target
+*.so
 
 # ide support
 .vscode/

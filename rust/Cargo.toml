@@ -5,7 +5,11 @@ edition = "2018"
 
 [lib]
 name = "cardano_serialization_lib_py"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies.pyo3]
+version = "0.11.1"
+features = ["extension-module"]
 
 [dependencies]
 cryptoxide = "0.2.1"
