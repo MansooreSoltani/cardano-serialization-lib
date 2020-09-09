@@ -11,3 +11,5 @@ rust/.idea
 
 # direnv
 .envrc
+
+rust/.cargo/config
