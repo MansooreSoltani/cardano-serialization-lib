@@ -4,6 +4,8 @@ use rand_core::{RngCore, CryptoRng};
 use crate::chain_crypto::key::{
   AsymmetricKey, AsymmetricPublicKey, PublicKeyError, SecretKeyError
 };
+use crate::chain_crypto::sign::{VerificationAlgorithm, Verification, SigningAlgorithm};
+use crate::chain_crypto::SignatureError;
 
 /// ED25519 Signing Algorithm
 pub struct Ed25519;
@@ -83,5 +85,34 @@ impl AsymmetricKey for Ed25519 {
         let mut buf = [0; ed25519::SEED_LENGTH];
         buf[0..ed25519::SEED_LENGTH].clone_from_slice(data);
         Ok(Priv(buf))
+    }
+}
+
+impl VerificationAlgorithm for Ed25519 {
+    type Signature = Sig;
+    const SIGNATURE_SIZE: usize = ed25519::SIGNATURE_LENGTH;
+    const SIGNATURE_BECH32_HRP: &'static str = "ed25519_sig";
+
+    fn verify_bytes(pubkey: &Self::Public, signature: &Self::Signature, msg: &[u8]) -> Verification {
+        ed25519::verify(msg, &pubkey.0, signature.as_ref()).into()
+    }
+
+    fn signature_from_bytes(data: &[u8]) -> Result<Self::Signature, SignatureError> {
+        if data.len() != ed25519::SIGNATURE_LENGTH {
+            return Err(SignatureError::SizeInvalid {
+                expected: ed25519::SIGNATURE_LENGTH,
+                got: data.len(),
+            });
+        }
+        let mut buf = [0; ed25519::SIGNATURE_LENGTH];
+        buf[0..ed25519::SIGNATURE_LENGTH].clone_from_slice(data);
+        Ok(Sig(buf))
+    }
+}
+
+impl SigningAlgorithm for Ed25519 {
+    fn sign(key: &Self::Secret, msg: &[u8]) -> Sig {
+        let (sk, _) = ed25519::keypair(&key.0);
+        Sig(ed25519::signature(msg, &sk))
     }
 }

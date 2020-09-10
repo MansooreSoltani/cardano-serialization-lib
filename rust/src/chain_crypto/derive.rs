@@ -34,10 +34,7 @@ impl SecretKey<Ed25519Bip32> {
         let derived_private_key = self.0.derive(DerivationScheme::V2, index);
         SecretKey(derived_private_key)
     }
-}
-
-impl Into<SecretKey<Ed25519Extended>> for SecretKey<Ed25519Bip32> {
-    fn into(self) -> SecretKey<Ed25519Extended> {
+    pub fn to_raw(&self) -> SecretKey<Ed25519Extended> {
         SecretKey(ExtendedPriv::from_xprv(&self.0))
     }
 }
@@ -47,10 +44,7 @@ impl PublicKey<Ed25519Bip32> {
         let derived_public_key = self.0.derive(DerivationScheme::V2, index)?;
         Ok(PublicKey(derived_public_key))
     }
-}
-
-impl Into<PublicKey<Ed25519>> for PublicKey<Ed25519Bip32> {
-    fn into(self) -> PublicKey<Ed25519> {
+    pub fn to_raw(&self) -> PublicKey<Ed25519> {
         PublicKey(Pub::from_xpub(&self.0))
     }
 }
