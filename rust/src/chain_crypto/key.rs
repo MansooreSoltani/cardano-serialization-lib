@@ -1,5 +1,6 @@
 use rand_core::{RngCore, CryptoRng};
 use std::hash::Hash;
+use std::fmt;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SecretKeyError {
@@ -7,10 +8,28 @@ pub enum SecretKeyError {
     StructureInvalid,
 }
 
+impl fmt::Display for SecretKeyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SecretKeyError::SizeInvalid => write!(f, "Invalid Secret Key size"),
+            SecretKeyError::StructureInvalid => write!(f, "Invalid Secret Key structure"),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PublicKeyError {
     SizeInvalid,
     StructureInvalid,
+}
+
+impl fmt::Display for PublicKeyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PublicKeyError::SizeInvalid => write!(f, "Invalid Public Key size"),
+            PublicKeyError::StructureInvalid => write!(f, "Invalid Public Key structure"),
+        }
+    }
 }
 
 pub trait AsymmetricPublicKey {
@@ -38,9 +57,11 @@ pub trait AsymmetricKey {
 
 pub struct SecretKey<A: AsymmetricKey>(pub(crate) A::Secret);
 
-pub struct PublicKey<A: AsymmetricPublicKey>(pub(crate) A::Public);
-
-pub struct KeyPair<A: AsymmetricKey>(SecretKey<A>, PublicKey<A::PubAlg>);
+impl<A: AsymmetricKey> Clone for SecretKey<A> {
+    fn clone(&self) -> Self {
+        SecretKey(self.0.clone())
+    }
+}
 
 impl<A: AsymmetricKey> SecretKey<A> {
     pub fn generate<T: RngCore + CryptoRng>(rng: T) -> Self {
@@ -54,15 +75,19 @@ impl<A: AsymmetricKey> SecretKey<A> {
     }
 }
 
-impl<A: AsymmetricKey> Clone for SecretKey<A> {
-    fn clone(&self) -> Self {
-        SecretKey(self.0.clone())
-    }
-}
-
 impl<A: AsymmetricKey> AsRef<[u8]> for SecretKey<A> {
     fn as_ref(&self) -> &[u8] {
         self.0.as_ref()
+    }
+}
+
+pub struct PublicKey<A: AsymmetricPublicKey>(pub(crate) A::Public);
+
+impl<A: AsymmetricPublicKey> PublicKey<A> {
+    pub fn from_binary(data: &[u8]) -> Result<Self, PublicKeyError> {
+        Ok(PublicKey(<A as AsymmetricPublicKey>::public_from_binary(
+            data,
+        )?))
     }
 }
 
@@ -77,6 +102,8 @@ impl<A: AsymmetricPublicKey> AsRef<[u8]> for PublicKey<A> {
         self.0.as_ref()
     }
 }
+
+pub struct KeyPair<A: AsymmetricKey>(SecretKey<A>, PublicKey<A::PubAlg>);
 
 impl<A: AsymmetricKey> Clone for KeyPair<A> {
     fn clone(&self) -> Self {

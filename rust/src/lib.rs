@@ -1,25 +1,23 @@
-use pyo3::prelude::*;
-use bip39::{Mnemonic, Language};
-use crate::crypto::{Bip32PrivateKey, PublicKey};
-use crate::address::{StakeCredential, EnterpriseAddress};
-
+pub mod types;
 pub mod chain_crypto;
 pub mod crypto;
 pub mod address;
+pub mod transaction;
+pub mod serialization;
 
-type Epoch = u32;
-type Slot = u32;
-// index of a tx within a block
-type TransactionIndex = u32;
-// index of a cert within a tx
-type CertificateIndex = u32;
+use pyo3::prelude::*;
+use bip39::{Mnemonic, Language};
+use types::*;
+use crate::crypto::Bip32PrivateKey;
+use crate::address::{StakeCredential, EnterpriseAddress};
+
 
 fn harden(index: u32) -> u32 {
     index | 0x80_00_00_00
 }
 
 #[pymodule]
-fn cardano_serialization_lib(py: Python, m: &PyModule) -> PyResult<()> {
+fn cardano_serialization_lib(_py: Python, m: &PyModule) -> PyResult<()> {
     #[pyfn(m, "generate_bip32_enterprise_address")]
     pub fn generate_bip32_enterprise_address_py(
         _py: Python, phrase: String, password: String, network: u8, account: u32, chains: u32, index: u32
@@ -41,7 +39,7 @@ fn generate_bip32_enterprise_address(phrase: String, password: String, network: 
         .derive(chains)
         .derive(index)
         .to_public();
-    let spend_raw_key: PublicKey = spend.into();
+    let spend_raw_key = spend.to_raw();
     let spend_cred = StakeCredential::from_keyhash(&spend_raw_key.hash());
     let address = EnterpriseAddress::new(network, &spend_cred).to_address();
     address.to_bech32(None)

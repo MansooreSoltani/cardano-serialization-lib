@@ -1,6 +1,11 @@
 mod key;
 pub use key::{
-    PublicKey, SecretKey, SecretKeyError
+    PublicKey, SecretKey, SecretKeyError, PublicKeyError
+};
+
+mod sign;
+pub use sign::{
+    Signature, SignatureError
 };
 
 pub mod algorithms;

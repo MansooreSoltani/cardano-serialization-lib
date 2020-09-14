@@ -14,6 +14,11 @@ pub use byron_address::*;
 pub use stake_credential::*;
 pub use pointer::*;
 use bech32::ToBase32;
+use std::io::{Write, BufRead};
+use cbor_event::se::Serializer;
+use crate::serialization::{Deserialize, DeserializeError, DeserializeFailure};
+use cbor_event::de::Deserializer;
+use crate::crypto::{Ed25519KeyHash, ScriptHash};
 
 #[derive(Debug, Clone)]
 enum AddrType {
@@ -69,6 +74,124 @@ impl Address {
         }
         buf
     }
+    pub fn from_bytes(data: Vec<u8>) -> Result<Address, DeserializeError> {
+        Self::from_bytes_impl(data.as_ref())
+    }
+    fn from_bytes_impl(data: &[u8]) -> Result<Address, DeserializeError> {
+        use std::convert::TryInto;
+        // header has 4 bits addr type discrim then 4 bits network discrim.
+        // Copied from shelley.cddl:
+        //
+        // shelley payment addresses:
+        // bit 7: 0
+        // bit 6: base/other
+        // bit 5: pointer/enterprise [for base: stake cred is keyhash/scripthash]
+        // bit 4: payment cred is keyhash/scripthash
+        // bits 3-0: network id
+        //
+        // reward addresses:
+        // bits 7-5: 111
+        // bit 4: credential is keyhash/scripthash
+        // bits 3-0: network id
+        //
+        // byron addresses:
+        // bits 7-4: 1000
+        (|| -> Result<Self, DeserializeError> {
+            let header = data[0];
+            let network = header & 0x0F;
+            const HASH_LEN: usize = Ed25519KeyHash::BYTE_COUNT;
+            // should be static assert but it's maybe not worth importing a whole external crate for it now
+            assert_eq!(ScriptHash::BYTE_COUNT, HASH_LEN);
+            // checks the /bit/ bit of the header for key vs scripthash then reads the credential starting at byte position /pos/
+            let read_addr_cred = |bit: u8, pos: usize| {
+                let hash_bytes: [u8; HASH_LEN] = data[pos..pos+HASH_LEN].try_into().unwrap();
+                let x = if header & (1 << bit)  == 0 {
+                    StakeCredential::from_keyhash(&Ed25519KeyHash::from(hash_bytes))
+                } else {
+                    StakeCredential::from_scripthash(&ScriptHash::from(hash_bytes))
+                };
+                x
+            };
+            let addr = match (header & 0xF0) >> 4 {
+                // base
+                0b0000 | 0b0001 | 0b0010 | 0b0011 => {
+                    const BASE_ADDR_SIZE: usize = 1 + HASH_LEN * 2;
+                    if data.len() < BASE_ADDR_SIZE {
+                        return Err(cbor_event::Error::NotEnough(data.len(), BASE_ADDR_SIZE).into());
+                    }
+                    if data.len() > BASE_ADDR_SIZE {
+                        return Err(cbor_event::Error::TrailingData.into());
+                    }
+                    AddrType::Base(BaseAddress::new(network, &read_addr_cred(4, 1), &read_addr_cred(5, 1 + HASH_LEN)))
+                },
+                // pointer
+                0b0100 | 0b0101 => {
+                    // header + keyhash + 3 natural numbers (min 1 byte each)
+                    const PTR_ADDR_MIN_SIZE: usize = 1 + HASH_LEN + 1 + 1 + 1;
+                    if data.len() < PTR_ADDR_MIN_SIZE {
+                        // possibly more, but depends on how many bytes the natural numbers are for the pointer
+                        return Err(cbor_event::Error::NotEnough(data.len(), PTR_ADDR_MIN_SIZE).into());
+                    }
+                    let mut byte_index = 1;
+                    let payment_cred = read_addr_cred(4, 1);
+                    byte_index += HASH_LEN;
+                    let (slot, slot_bytes) = variable_nat_decode(&data[byte_index..])
+                        .ok_or(DeserializeError::new("Address.Pointer.slot", DeserializeFailure::VariableLenNatDecodeFailed))?;
+                    byte_index += slot_bytes;
+                    let (tx_index, tx_bytes) = variable_nat_decode(&data[byte_index..])
+                        .ok_or(DeserializeError::new("Address.Pointer.tx_index", DeserializeFailure::VariableLenNatDecodeFailed))?;
+                    byte_index += tx_bytes;
+                    let (cert_index, cert_bytes) = variable_nat_decode(&data[byte_index..])
+                        .ok_or(DeserializeError::new("Address.Pointer.cert_index", DeserializeFailure::VariableLenNatDecodeFailed))?;
+                    byte_index += cert_bytes;
+                    if byte_index < data.len() {
+                        return Err(cbor_event::Error::TrailingData.into());
+                    }
+                    AddrType::Ptr(
+                        PointerAddress::new(
+                            network,
+                            &payment_cred,
+                            &Pointer::new(
+                                slot.try_into().map_err(|_| DeserializeError::new("Address.Pointer.slot", DeserializeFailure::CBOR(cbor_event::Error::ExpectedU32)))?,
+                                tx_index.try_into().map_err(|_| DeserializeError::new("Address.Pointer.tx_index", DeserializeFailure::CBOR(cbor_event::Error::ExpectedU32)))?,
+                                cert_index.try_into().map_err(|_| DeserializeError::new("Address.Pointer.cert_index", DeserializeFailure::CBOR(cbor_event::Error::ExpectedU32)))?)))
+                },
+                // enterprise
+                0b0110 | 0b0111 => {
+                    const ENTERPRISE_ADDR_SIZE: usize = 1 + HASH_LEN;
+                    if data.len() < ENTERPRISE_ADDR_SIZE {
+                        return Err(cbor_event::Error::NotEnough(data.len(), ENTERPRISE_ADDR_SIZE).into());
+                    }
+                    if data.len() > ENTERPRISE_ADDR_SIZE {
+                        return Err(cbor_event::Error::TrailingData.into());
+                    }
+                    AddrType::Enterprise(EnterpriseAddress::new(network, &read_addr_cred(4, 1)))
+                },
+                // reward
+                0b1110 | 0b1111 => {
+                    const REWARD_ADDR_SIZE: usize = 1 + HASH_LEN;
+                    if data.len() < REWARD_ADDR_SIZE {
+                        return Err(cbor_event::Error::NotEnough(data.len(), REWARD_ADDR_SIZE).into());
+                    }
+                    if data.len() > REWARD_ADDR_SIZE {
+                        return Err(cbor_event::Error::TrailingData.into());
+                    }
+                    AddrType::Reward(RewardAddress::new(network, &read_addr_cred(4, 1)))
+                }
+                // byron
+                0b1000 => {
+                    // note: 0b1000 was chosen because all existing Byron addresses actually start with 0b1000
+                    // Therefore you can re-use Byron addresses as-is
+                    match ByronAddress::from_bytes(data.to_vec()) {
+                        Ok(addr) => AddrType::Byron(addr),
+                        Err(e) => return Err(cbor_event::Error::CustomError(e).into()),
+                    }
+                },
+                _ => return Err(DeserializeFailure::BadAddressType(header).into()),
+            };
+            Ok(Address(addr))
+        })().map_err(|e| e.annotate("Address"))
+    }
     pub fn to_bech32(&self, prefix: Option<String>) -> String {
         let human_readable_part = match prefix {
             Some(prefix_str) => prefix_str,
@@ -87,7 +210,6 @@ impl Address {
         };
         bech32::encode(&human_readable_part, self.to_bytes().to_base32()).unwrap()
     }
-
     pub fn network_id(&self) -> u8 {
         match &self.0 {
             AddrType::Base(a) => a.network,
@@ -97,6 +219,33 @@ impl Address {
             AddrType::Byron(a) => a.network_id(),
         }
     }
+}
+
+impl cbor_event::se::Serialize for Address {
+    fn serialize<'se, W: Write>(&self, serializer: &'se mut Serializer<W>) -> cbor_event::Result<&'se mut Serializer<W>> {
+        serializer.write_bytes(self.to_bytes())
+    }
+}
+
+impl Deserialize for Address {
+    fn deserialize<R: BufRead>(raw: &mut Deserializer<R>) -> Result<Self, DeserializeError> {
+        Self::from_bytes_impl(raw.bytes()?.as_ref())
+    }
+}
+
+// returns (Number represented, bytes read) if valid encoding
+// or None if decoding prematurely finished
+fn variable_nat_decode(bytes: &[u8]) -> Option<(u64, usize)> {
+    let mut output = 0u64;
+    let mut bytes_read = 0;
+    for byte in bytes {
+        output = (output << 7) | (byte & 0x7F) as u64;
+        bytes_read += 1;
+        if (byte & 0x80) == 0 {
+            return Some((output, bytes_read));
+        }
+    }
+    None
 }
 
 fn variable_nat_encode(mut num: u64) -> Vec<u8> {
@@ -151,8 +300,8 @@ mod tests {
             .derive(2)
             .derive(0)
             .to_public();
-        let spend_raw_key: PublicKey = spend.into();
-        let stake_raw_key: PublicKey = stake.into();
+        let spend_raw_key = spend.to_raw();
+        let stake_raw_key = stake.to_raw();
         let spend_cred = StakeCredential::from_keyhash(&spend_raw_key.hash());
         let stake_cred = StakeCredential::from_keyhash(&stake_raw_key.hash());
         let testnet_address = BaseAddress::new(0, &spend_cred, &stake_cred).to_address();
@@ -170,7 +319,7 @@ mod tests {
             .derive(0)
             .derive(0)
             .to_public();
-        let spend_raw_key: PublicKey = spend.into();
+        let spend_raw_key = spend.to_raw();
         let spend_cred = StakeCredential::from_keyhash(&spend_raw_key.hash());
         let addr_net_0 = PointerAddress::new(0, &spend_cred, &Pointer::new(1, 2, 3)).to_address();
         assert_eq!(addr_net_0.to_bech32(None), "addr_test1gpu5vlrf4xkxv2qpwngf6cjhtw542ayty80v8dyr49rf5egpqgpsdhdyc0");
@@ -187,7 +336,7 @@ mod tests {
             .derive(0)
             .derive(0)
             .to_public();
-        let spend_raw_key: PublicKey = spend.into();
+        let spend_raw_key = spend.to_raw();
         let spend_cred = StakeCredential::from_keyhash(&spend_raw_key.hash());
         let testnet_address = EnterpriseAddress::new(0, &spend_cred).to_address();
         assert_eq!(testnet_address.to_bech32(None), "addr_test1vpu5vlrf4xkxv2qpwngf6cjhtw542ayty80v8dyr49rf5eg57c2qv");
@@ -218,7 +367,7 @@ mod tests {
             .derive(2)
             .derive(0)
             .to_public();
-        let stake_raw_key: PublicKey = staking_key.into();
+        let stake_raw_key = staking_key.to_raw();
         let staking_cred = StakeCredential::from_keyhash(&stake_raw_key.hash());
         let testnet_address = RewardAddress::new(0, &staking_cred).to_address();
         assert_eq!(testnet_address.to_bech32(None), "stake_test1uqevw2xnsc0pvn9t9r9c7qryfqfeerchgrlm3ea2nefr9hqp8n5xl");

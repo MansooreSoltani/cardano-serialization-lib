@@ -1,13 +1,17 @@
 use cbor_event::cbor;
+use cbor_event::de::Deserializer;
 use cbor_event::se::{Serializer, Serialize};
-use std::io::Write;
+use crate::serialization::Deserialize;
+use std::io::{Write, BufRead};
+use std::fmt;
+use std::convert::TryInto;
 use crate::crypto::Bip32PublicKey;
 use ed25519_bip32::XPub;
 use cryptoxide::sha3;
 use cryptoxide::digest::Digest;
 use cryptoxide::blake2b::Blake2b;
 use super::*;
-use std::fmt;
+
 
 const EXTENDED_ADDR_LEN: usize = 28;
 
@@ -57,12 +61,61 @@ impl cbor_event::se::Serialize for Attributes {
     }
 }
 
+impl cbor_event::de::Deserialize for Attributes {
+    fn deserialize<R: BufRead>(reader: &mut Deserializer<R>) -> cbor_event::Result<Self> {
+        let len = reader.map()?;
+        let mut len = match len {
+            cbor_event::Len::Indefinite => {
+                return Err(cbor_event::Error::CustomError(format!(
+                    "Invalid Attributes: received map of {:?} elements",
+                    len
+                )));
+            }
+            cbor_event::Len::Len(len) => len,
+        };
+        let mut derivation_path = None;
+        let mut network_magic = None;
+        while len > 0 {
+            let key = reader.unsigned_integer()?;
+            match key {
+                ATTRIBUTE_NAME_TAG_DERIVATION => derivation_path = Some(reader.bytes()?),
+                ATTRIBUTE_NAME_TAG_NETWORK_MAGIC => {
+                    // Yes, this is an integer encoded as CBOR encoded as Bytes in CBOR.
+                    let bytes = reader.bytes()?;
+                    let n = Deserializer::from(std::io::Cursor::new(bytes)).deserialize::<u32>()?;
+                    network_magic = Some(n);
+                }
+                _ => {
+                    return Err(cbor_event::Error::CustomError(format!(
+                        "invalid Attribute key {}",
+                        key
+                    )));
+                }
+            }
+            len -= 1;
+        }
+        Ok(Attributes {
+            derivation_path,
+            network_magic,
+        })
+    }
+}
+
 // public key tag only for encoding/decoding purpose
 struct PubKeyTag();
 
 impl cbor_event::se::Serialize for PubKeyTag {
     fn serialize<'se, W: Write>(&self, serializer: &'se mut Serializer<W>) -> cbor_event::Result<&'se mut Serializer<W>> {
         serializer.write_unsigned_integer(0)
+    }
+}
+
+impl cbor_event::de::Deserialize for PubKeyTag {
+    fn deserialize<R: BufRead>(reader: &mut Deserializer<R>) -> cbor_event::Result<Self> {
+        match reader.unsigned_integer()? {
+            0 => Ok(PubKeyTag()),
+            _ => Err(cbor_event::Error::CustomError(format!("Invalid AddrType"))),
+        }
     }
 }
 
@@ -100,10 +153,19 @@ impl ByronAddress {
     pub fn to_base58(&self) -> String {
         format!("{}", self)
     }
+    pub fn from_base58(s: &str) -> Result<Self, String> {
+        let bytes = bs58::decode(s).into_vec().map_err(|_| String::from("base58 error"))?;
+        Self::from_bytes(bytes)
+    }
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut addr_bytes = Serializer::new_vec();
         self.serialize(&mut addr_bytes).unwrap();
         addr_bytes.finalize()
+    }
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
+        let mut raw = Deserializer::from(std::io::Cursor::new(bytes));
+        let addr = ByronAddress::deserialize(&mut raw).map_err(|e| format!("{}", e))?;
+        Ok(addr)
     }
     pub fn network_id(&self) -> u8 {
         // premise: during the Byron-era, we had one mainnet (764824073) and many many testnets
@@ -119,6 +181,20 @@ impl ByronAddress {
             Some(x) => if x == mainnet_network_id { 0b0001 } else { 0b000 },
             None => 0b0001, // mainnet is implied if omitted
         }
+    }
+    /// returns the byron protocol magic embedded in the address, or mainnet id if none is present
+    /// note: for bech32 addresses, you need to use network_id instead
+    pub fn byron_protocol_magic(&self) -> u32 {
+        let mainnet_network_id = 764824073;
+        match self.attributes.network_magic {
+            Some(x) => x,
+            None => mainnet_network_id, // mainnet is implied if omitted
+        }
+    }
+    pub fn attributes(&self) -> Vec<u8> {
+        let mut attributes_bytes = Serializer::new_vec();
+        self.attributes.serialize(&mut attributes_bytes).unwrap();
+        attributes_bytes.finalize()
     }
     // icarus-style address (Ae2)
     pub fn from_icarus_key(key: &Bip32PublicKey, network: u8) -> ByronAddress {
@@ -139,6 +215,26 @@ impl cbor_event::se::Serialize for ByronAddress {
         let addr_bytes = cbor_event::Value::Bytes(self.addr.to_vec());
         cbor::encode_with_crc32_(&(&addr_bytes, &self.attributes, &PubKeyTag()), serializer)?;
         Ok(serializer)
+    }
+}
+
+impl cbor_event::de::Deserialize for ByronAddress {
+    fn deserialize<R: BufRead>(reader: &mut Deserializer<R>) -> cbor_event::Result<Self> {
+        let bytes = cbor::raw_with_crc32(reader)?;
+        let mut raw = Deserializer::from(std::io::Cursor::new(bytes));
+        raw.tuple(3, "ExtendedAddr")?;
+        let addr_bytes = raw.bytes()?;
+        let addr = addr_bytes.as_slice().try_into().map_err(|_| {
+            cbor_event::Error::WrongLen(
+                addr_bytes.len() as u64,
+                cbor_event::Len::Len(EXTENDED_ADDR_LEN as u64),
+                "invalid extended address length",
+            )
+        })?;
+        let attributes = cbor_event::de::Deserialize::deserialize(&mut raw)?;
+        let _addr_type: PubKeyTag = cbor_event::de::Deserialize::deserialize(&mut raw)?;
+
+        Ok(ByronAddress { addr, attributes })
     }
 }
 
@@ -173,6 +269,7 @@ fn hash_spending_data(xpub: &XPub, attrs: &Attributes) -> [u8; 28] {
 pub mod cbor {
     use cbor_event::{cbor, Len};
     use cbor_event::se::Serializer;
+    use cbor_event::de::Deserializer;
     use crc::crc32;
 
     pub fn encode_with_crc32_<T, W>(t: &T, s: &mut Serializer<W>) -> cbor_event::Result<()>
@@ -187,6 +284,29 @@ pub mod cbor {
         Ok(())
     }
 
+    pub fn raw_with_crc32<R: std::io::BufRead>(raw: &mut Deserializer<R>) -> cbor_event::Result<Vec<u8>> {
+        let len = raw.array()?;
+        assert!(len == Len::Len(2));
+
+        let tag = raw.tag()?;
+        if tag != 24 {
+            return Err(cbor_event::Error::CustomError(format!(
+                "Invalid Tag: {} but expected 24",
+                tag
+            )));
+        }
+        let bytes = raw.bytes()?;
+        let crc = raw.unsigned_integer()?;
+        let found_crc = crc32::checksum_ieee(bytes.as_slice());
+        if crc != found_crc as u64 {
+            return Err(cbor_event::Error::CustomError(format!(
+                "Invalid CRC32: 0x{:x} but expected 0x{:x}",
+                crc, found_crc
+            )));
+        }
+        Ok(bytes)
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -195,5 +315,26 @@ pub mod cbor {
             let s = b"The quick brown fox jumps over the lazy dog";
             assert_eq!(0x414fa339, crc32::checksum_ieee(s));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn byron_address_parsing() {
+        // mainnet address w/ protocol magic omitted
+        let addr = ByronAddress::from_base58("Ae2tdPwUPEZ4YjgvykNpoFeYUxoyhNj2kg8KfKWN2FizsSpLUPv68MpTVDo").unwrap();
+        assert_eq!(addr.byron_protocol_magic(), 764824073);
+        let addr_bytes = addr.to_bytes();
+        let addr = ByronAddress::from_bytes(addr_bytes).unwrap();
+        assert_eq!(addr.to_base58(), "Ae2tdPwUPEZ4YjgvykNpoFeYUxoyhNj2kg8KfKWN2FizsSpLUPv68MpTVDo");
+
+        // original Byron testnet address
+        let addr = ByronAddress::from_base58("2cWKMJemoBakg8XXW1XNFNZ8VFHVrBPfcoEc9amhL3BBMxJXdMiHmSyk3zRp2SDXHJcZr").unwrap();
+        assert_eq!(addr.byron_protocol_magic(), 1097911063);
+        let addr_bytes = addr.to_bytes();
+        let addr = ByronAddress::from_bytes(addr_bytes).unwrap();
+        assert_eq!(addr.to_base58(), "2cWKMJemoBakg8XXW1XNFNZ8VFHVrBPfcoEc9amhL3BBMxJXdMiHmSyk3zRp2SDXHJcZr");
     }
 }

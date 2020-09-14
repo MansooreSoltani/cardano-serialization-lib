@@ -125,6 +125,7 @@ dependencies = [
  "cryptoxide",
  "ed25519-bip32",
  "hex",
+ "linked-hash-map",
  "pyo3",
  "rand_core 0.5.1",
 ]
@@ -422,6 +423,12 @@ name = "libc"
 version = "0.2.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "755456fae044e6fa1ebbbd1b3e902ae19e73097ed4ed87bb79934a867c007bc3"
+
+[[package]]
+name = "linked-hash-map"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8dd5a6d5999d9907cda8ed67bbd137d3af8085216c2ac62de5be860bd41f304a"
 
 [[package]]
 name = "lock_api"
