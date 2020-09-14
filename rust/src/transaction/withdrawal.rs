@@ -11,6 +11,24 @@ use crate::{to_from_bytes, to_bytes, from_bytes};
 pub struct Withdrawals(pub (crate) linked_hash_map::LinkedHashMap<RewardAddress, Coin>);
 
 impl Withdrawals {
+    pub fn new() -> Self {
+        Self(linked_hash_map::LinkedHashMap::new())
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn keys(&self) -> Vec<RewardAddress> {
+        self.0
+            .iter()
+            .map(|(k, _v)| k.clone())
+            .collect::<Vec<RewardAddress>>()
+    }
+    pub fn get(&self, key: &RewardAddress) -> Option<Coin> {
+        self.0.get(key).map(|v| v.clone())
+    }
+    pub fn insert(&mut self, key: &RewardAddress, value: &Coin) -> Option<Coin> {
+        self.0.insert(key.clone(), value.clone())
+    }
     pub fn total(&self) -> Result<Coin, String> {
         self.0
             .values()

@@ -12,6 +12,34 @@ pub struct TransactionWitnessSet {
     pub (crate) bootstraps: Option<BootstrapWitnesses>,
 }
 
+impl TransactionWitnessSet {
+    pub fn new() -> Self {
+        Self {
+            vkeys: None,
+            scripts: None,
+            bootstraps: None,
+        }
+    }
+    pub fn vkeys(&self) -> Option<Vkeywitnesses> {
+        self.vkeys.clone()
+    }
+    pub fn set_vkeys(&mut self, vkeys: &Vkeywitnesses) {
+        self.vkeys = Some(vkeys.clone())
+    }
+    pub fn scripts(&self) -> Option<MultisigScripts> {
+        self.scripts.clone()
+    }
+    pub fn set_scripts(&mut self, scripts: &MultisigScripts) {
+        self.scripts = Some(scripts.clone())
+    }
+    pub fn bootstraps(&self) -> Option<BootstrapWitnesses> {
+        self.bootstraps.clone()
+    }
+    pub fn set_bootstraps(&mut self, bootstraps: &BootstrapWitnesses) {
+        self.bootstraps = Some(bootstraps.clone())
+    }
+}
+
 to_from_bytes!(TransactionWitnessSet);
 
 impl cbor_event::se::Serialize for TransactionWitnessSet {

@@ -80,6 +80,11 @@ impl Bip32PrivateKey {
     pub fn from_bip39_entropy(entropy: &[u8], password: &[u8]) -> Self {
         Bip32PrivateKey(crypto::SecretKey::from_bip39_entropy(entropy, password))
     }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Bip32PrivateKey, String> {
+        crypto::SecretKey::<crypto::Ed25519Bip32>::from_binary(bytes)
+            .map_err(|e| format!("{}", e))
+            .map(Bip32PrivateKey)
+    }
     pub fn derive(&self, index: u32) -> Self {
         Self(self.0.derive(index))
     }
@@ -108,6 +113,18 @@ impl From<EitherEd25519SecretKey> for PrivateKey {
 }
 
 impl PrivateKey {
+    pub fn from_extended_bytes(bytes: &[u8]) -> Result<PrivateKey, String> {
+        crypto::SecretKey::from_binary(bytes)
+            .map(EitherEd25519SecretKey::Extended)
+            .map(PrivateKey)
+            .map_err(|_| String::from("Invalid extended secret key"))
+    }
+    pub fn from_normal_bytes(bytes: &[u8]) -> Result<PrivateKey, String> {
+        crypto::SecretKey::from_binary(bytes)
+            .map(EitherEd25519SecretKey::Normal)
+            .map(PrivateKey)
+            .map_err(|_| String::from("Invalid normal secret key"))
+    }
     pub fn to_public(&self) -> PublicKey {
         self.0.to_public().into()
     }
@@ -137,6 +154,11 @@ impl From<crypto::PublicKey<crypto::Ed25519>> for PublicKey {
 }
 
 impl PublicKey {
+    pub fn from_bytes(bytes: &[u8]) -> Result<PublicKey, String> {
+        crypto::PublicKey::from_binary(bytes)
+            .map_err(|e| format!("{}", e))
+            .map(PublicKey)
+    }
     pub fn as_bytes(&self) -> Vec<u8> {
         self.0.as_ref().to_vec()
     }

@@ -17,7 +17,12 @@ impl RewardAddress {
             payment: payment.clone(),
         }
     }
-
+    pub fn from_address(addr: &Address) -> Option<RewardAddress> {
+        match &addr.0 {
+            AddrType::Reward(reward) => Some(reward.clone()),
+            _ => None,
+        }
+    }
     pub fn to_address(&self) -> Address {
         Address(AddrType::Reward(self.clone()))
     }

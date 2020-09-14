@@ -47,6 +47,21 @@ pub struct UnitInterval {
     denominator: u64,
 }
 
+impl UnitInterval {
+    pub fn new(numerator: u64, denominator: u64) -> Self {
+        Self {
+            numerator,
+            denominator,
+        }
+    }
+    pub fn numerator(&self) -> u64 {
+        self.numerator
+    }
+    pub fn denominator(&self) -> u64 {
+        self.denominator
+    }
+}
+
 to_from_bytes!(UnitInterval);
 
 impl Serialize for UnitInterval {

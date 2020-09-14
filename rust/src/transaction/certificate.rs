@@ -779,6 +779,21 @@ impl DeserializeEmbeddedGroup for PoolParams {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Ed25519KeyHashes(pub (crate) Vec<Ed25519KeyHash>);
 
+impl Ed25519KeyHashes {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn get(&self, index: usize) -> Ed25519KeyHash {
+        self.0[index].clone()
+    }
+    pub fn add(&mut self, elem: &Ed25519KeyHash) {
+        self.0.push(elem.clone());
+    }
+}
+
 to_from_bytes!(Ed25519KeyHashes);
 
 impl cbor_event::se::Serialize for Ed25519KeyHashes {
@@ -860,6 +875,21 @@ impl DeserializeEmbeddedGroup for PoolMetadata {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Relays(Vec<Relay>);
+
+impl Relays {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn get(&self, index: usize) -> Relay {
+        self.0[index].clone()
+    }
+    pub fn add(&mut self, elem: &Relay) {
+        self.0.push(elem.clone());
+    }
+}
 
 to_from_bytes!(Relays);
 
