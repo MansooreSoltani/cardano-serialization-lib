@@ -210,6 +210,11 @@ impl Address {
         };
         bech32::encode(&human_readable_part, self.to_bytes().to_base32()).unwrap()
     }
+    pub fn from_bech32(bech_str: &str) -> Result<Address, String> {
+        let (_hrp, u5data) = bech32::decode(bech_str).map_err(|e| e.to_string())?;
+        let data: Vec<u8> = bech32::FromBase32::from_base32(&u5data).unwrap();
+        Ok(Self::from_bytes_impl(data.as_ref()).map_err(|e| e.to_string())?)
+    }
     pub fn network_id(&self) -> u8 {
         match &self.0 {
             AddrType::Base(a) => a.network,
