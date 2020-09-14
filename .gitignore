@@ -1,6 +1,10 @@
-# build artifacts
+# rust build artifacts
 rust/target
 *.so
+
+# python build artifacts
+cardano_serialization_lib.egg-info/
+dist/
 
 # ide support
 .vscode/
