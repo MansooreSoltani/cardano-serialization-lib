@@ -110,11 +110,15 @@ fn generate_transaction_from_bip32_enterprise_address(
     ttl: u32,
     bech32_change_address: String,
 ) -> String {
+    // follow the protocol parameters
+    // those numbers can be found by running `cardano-cli shelley query protocol-parameters`
+    // e.g. for testnet you can use the following command
+    // cardano-cli shelley query protocol-parameters --testnet-magic 1097911063 --out-file protocol.json
     let minimum_utxo_val: Coin = 1000000;
     let pool_deposit = 500000000;
     let key_deposit = 2000000;
-    let coefficient: Coin = 500;
-    let constant: Coin = 2;
+    let coefficient: Coin = 44;
+    let constant: Coin = 155381;
     let linear_fee = LinearFee::new(&coefficient, &constant);
 
     let to_address = Address::from_bech32(bech32_to_address.as_str())
