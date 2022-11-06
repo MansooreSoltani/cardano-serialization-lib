@@ -6,7 +6,12 @@ use cbor_event::de::Deserializer;
 use crate::serialization::{Deserialize, DeserializeError, DeserializeFailure, DeserializeEmbeddedGroup};
 use crate::{to_from_bytes, to_bytes, from_bytes};
 use std::io::{Write, BufRead, Seek};
-
+use crate::address::{StakeCredential, EnterpriseAddress, Address};
+extern crate hex;
+fn harden(index: u32) -> u32 {
+    index | 0x80_00_00_00
+}
+use hex::FromHex;
 // Evolving nonce type (used for Update's crypto)
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Nonce {
@@ -136,12 +141,22 @@ impl PrivateKey {
 pub struct Bip32PublicKey(crypto::PublicKey<crypto::Ed25519Bip32>);
 
 impl Bip32PublicKey {
-    pub fn as_bytes(&self) -> Vec<u8> {
-        self.0.as_ref().to_vec()
+    pub fn derive(&self, index: u32) -> Self {
+        Self((self.0.derive(index)).unwrap())
     }
     pub fn to_raw(&self) -> PublicKey {
         PublicKey(self.0.to_raw())
     }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Bip32PublicKey, String> {
+        crypto::PublicKey::<crypto::Ed25519Bip32>::from_binary(bytes)
+            .map_err(|e| format!("{}", e))
+            .map(Bip32PublicKey)
+    }
+
+    pub fn as_bytes(&self) -> Vec<u8> {
+        self.0.as_ref().to_vec()
+    }
+
 }
 
 #[derive(Clone)]
@@ -517,12 +532,33 @@ mod tests {
 
     #[test]
     fn bip32_root_private_key_test() {
-        let phrase = "art forum devote street sure rather head chuckle guard poverty release quote oak craft enemy";
+        let phrase = "art forum devote street sure rather head chuckle guard poverty release quote oak craft enemy release quote oak craft enemy release quote oak craft";
         let mnemonic = Mnemonic::from_phrase(phrase, Language::English).unwrap();
         let entropy = mnemonic.entropy();
         assert_eq!(entropy, [0x0c, 0xcb, 0x74, 0xf3, 0x6b, 0x7d, 0xa1, 0x64, 0x9a, 0x81, 0x44, 0x67, 0x55, 0x22, 0xd4, 0xd8, 0x09, 0x7c, 0x64, 0x12]);
 
         let root_key = Bip32PrivateKey::from_bip39_entropy(&entropy, &[]);
-        assert_eq!(hex::encode(&root_key.as_bytes()), "b8f2bece9bdfe2b0282f5bad705562ac996efb6af96b648f4445ec44f47ad95c10e3d72f26ed075422a36ed8585c745a0e1150bcceba2357d058636991f38a3791e248de509c070d812ab2fda57860ac876bc489192c1ef4ce253c197ee219a4");
+        //println!("{:?}",&root_key.as_bytes());
+        //let root_key1 = Bip32PrivateKey::from_bytes(&[248,146,128,254,186,23,133,62,7,136,60,218,42,222,150,106,12,252,163,153,64,128,144,122,141,98,172,111,113,165,95,208]);
+        //let root_key = root_key1.unwrap();
+        let private_key = root_key.derive(harden(1852))
+            .derive(harden(1815))
+            .derive(harden(0))
+            .derive(0)
+            .derive(0);
+        let hex_key = hex::encode(root_key.as_bytes());
+        let y = Bip32PrivateKey::from_bytes(&hex::decode(hex_key).unwrap()).unwrap();
+        let private_key1 = y.derive(harden(1852))
+            .derive(harden(1815))
+            .derive(harden(0))
+            .derive(0)
+            .derive(0);
+        let spend = private_key.to_public();
+        let spend_raw_key = spend.to_raw();
+        let spend_cred = StakeCredential::from_keyhash(&spend_raw_key.hash());
+        let address = EnterpriseAddress::new(0, &spend_cred).to_address();
+        let address = address.to_bech32(None);
+        println!("{:?}",address);
+        //assert_eq!(hex::encode(&root_key.as_bytes()), "b8f2bece9bdfe2b0282f5bad705562ac996efb6af96b648f4445ec44f47ad95c10e3d72f26ed075422a36ed8585c745a0e1150bcceba2357d058636991f38a3791e248de509c070d812ab2fda57860ac876bc489192c1ef4ce253c197ee219a4");
     }
 }
